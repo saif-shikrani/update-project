@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { hangUp, onCallUpdate, placeCall, stateLabel } from './phone'
 import { AdminPage, AuthScreen, BillingPage, Dashboard, NumbersPage, type SessionUser } from './desk'
+import { Brand, BrandMark, Chip, EmptyState, Icon, PageHead, SkeletonLines, initials, type IconName, type Tone } from './ui'
 
 type CallRecord = {
   id: number
@@ -51,6 +52,20 @@ type WaLink = {
   type?: string
 }
 
+type NavItem = { href: string, label: string, icon: IconName }
+
+const deskNav: NavItem[] = [
+  { href: '#/', label: 'Dashboard', icon: 'grid' },
+  { href: '#/calls', label: 'Calls', icon: 'phone' },
+  { href: '#/numbers', label: 'Numbers', icon: 'hash' },
+  { href: '#/billing', label: 'Billing', icon: 'card' },
+]
+
+const adminNav: NavItem[] = [
+  { href: '#/admin', label: 'Approvals', icon: 'shield' },
+  { href: '#/whatsapp', label: 'WhatsApp', icon: 'whatsapp' },
+]
+
 async function readJson<T>(response: Response): Promise<T> {
   const body = await response.json() as T & { error?: string }
   if (!response.ok) throw new Error(body.error || 'Request failed.')
@@ -71,7 +86,17 @@ function when(value: string | null) {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString()
+  return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function shortDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  const sameDay = date.toDateString() === now.toDateString()
+  return sameDay
+    ? date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
 function normalizeNumber(input: string) {
@@ -84,9 +109,26 @@ function chatLabel(chat: Chat) {
   return chat.displayName || chat.jid.replace(/@.*/, '')
 }
 
+function callTone(status: string): Tone {
+  if (status === 'answered') return 'ok'
+  if (status === 'failed') return 'bad'
+  if (status === 'initiated' || status === 'ringing') return 'warn'
+  return 'neutral'
+}
+
+function statusLabel(status: string) {
+  if (status === 'hangup') return 'Ended'
+  if (status === 'answered') return 'Answered'
+  if (status === 'failed') return 'Failed'
+  if (status === 'ringing') return 'Ringing'
+  if (status === 'initiated') return 'Started'
+  return status
+}
+
 export function App() {
   const route = useHash()
   const [me, setMe] = useState<SessionUser | null | undefined>(undefined)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/auth/me').then(async (response) => {
@@ -104,32 +146,42 @@ export function App() {
     }
   }, [me, route])
 
-  if (me === undefined) return <p className="waiting page-wait">Loading.</p>
+  useEffect(() => {
+    setMenuOpen(false)
+  }, [route])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previous
+    }
+  }, [menuOpen])
+
+  if (me === undefined) return <Boot />
   if (!me) return <AuthScreen onSuccess={setMe} />
 
   async function signOut() {
     await fetch('/api/auth/logout', { method: 'POST' })
     setMe(null)
+    setMenuOpen(false)
     window.location.hash = '#/'
   }
 
   const adminRoute = route === '#/admin' || route === '#/whatsapp'
+
   if (me.role === 'admin' && adminRoute) {
     return (
-      <div className="shell shell-admin">
-        <aside className="side">
-          <a className="mark" href="#/admin">Admin</a>
-          <p className="who"><strong>{me.name}</strong><br />{me.email}</p>
-          <nav>
-            <a href="#/admin" aria-current={route === '#/admin' ? 'page' : undefined}>Approvals</a>
-            <a href="#/whatsapp" aria-current={route === '#/whatsapp' ? 'page' : undefined}>WhatsApp</a>
-          </nav>
-          <div className="side-foot">
-            <a className="ghost" href="#/">Back to desk</a>
-            <button type="button" className="ghost" onClick={signOut}>Sign out</button>
-          </div>
-        </aside>
-        <div className="wrap">{route === '#/whatsapp' ? <WhatsApp /> : <AdminPage />}</div>
+      <div className="shell shell--admin">
+        <a className="skip-link" href="#main">Skip to content</a>
+        <Sidebar me={me} route={route} admin onSignOut={signOut} />
+        <div className="workspace">
+          <MobileBar admin menuOpen={menuOpen} onOpenMenu={() => setMenuOpen(true)} onCloseMenu={() => setMenuOpen(false)} me={me} route={route} onSignOut={signOut} />
+          <main className="page" id="main" key={route}>
+            {route === '#/whatsapp' ? <WhatsApp /> : <AdminPage />}
+          </main>
+        </div>
       </div>
     )
   }
@@ -144,21 +196,14 @@ export function App() {
 
   return (
     <div className="shell">
-      <aside className="side">
-        <a className="mark" href="#/">Desk</a>
-        <p className="who"><strong>{me.name}</strong><br />{me.email}</p>
-        <nav>
-          <a href="#/" aria-current={route === '#/' || route === '' ? 'page' : undefined}>Dashboard</a>
-          <a href="#/numbers" aria-current={route === '#/numbers' ? 'page' : undefined}>Numbers</a>
-          <a href="#/billing" aria-current={route === '#/billing' ? 'page' : undefined}>Billing</a>
-          <a href="#/calls" aria-current={route === '#/calls' ? 'page' : undefined}>Calls</a>
-        </nav>
-        <div className="side-foot">
-          {me.role === 'admin' ? <a className="ghost" href="#/admin">Admin</a> : null}
-          <button type="button" className="ghost" onClick={signOut}>Sign out</button>
-        </div>
-      </aside>
-      <div className="wrap">{page}</div>
+      <a className="skip-link" href="#main">Skip to content</a>
+      <Sidebar me={me} route={route} onSignOut={signOut} />
+      <div className="workspace">
+        <MobileBar menuOpen={menuOpen} onOpenMenu={() => setMenuOpen(true)} onCloseMenu={() => setMenuOpen(false)} me={me} route={route} onSignOut={signOut} />
+        <main className="page" id="main" key={route}>
+          {page}
+        </main>
+      </div>
     </div>
   )
 }
@@ -171,6 +216,163 @@ function useHash() {
     return () => window.removeEventListener('hashchange', onChange)
   }, [])
   return hash
+}
+
+function isActive(item: NavItem, route: string) {
+  if (item.href === '#/') return route === '#/' || route === ''
+  return route === item.href
+}
+
+function NavLinks({ route, admin, onNavigate }: { route: string, admin: boolean, onNavigate?: () => void }) {
+  return (
+    <>
+      <div className="nav-group">
+        <p className="nav-label">Workspace</p>
+        <div className="nav-list">
+          {deskNav.map((item) => (
+            <a key={item.href} href={item.href} className="nav-item" aria-current={!admin && isActive(item, route) ? 'page' : undefined} onClick={onNavigate}>
+              <Icon name={item.icon} size={18} />
+              <span>{item.label}</span>
+            </a>
+          ))}
+        </div>
+      </div>
+      {admin ? (
+        <div className="nav-group">
+          <p className="nav-label">Admin</p>
+          <div className="nav-list">
+            {adminNav.map((item) => (
+              <a key={item.href} href={item.href} className="nav-item" aria-current={isActive(item, route) ? 'page' : undefined} onClick={onNavigate}>
+                <Icon name={item.icon} size={18} />
+                <span>{item.label}</span>
+              </a>
+            ))}
+            <a href="#/" className="nav-item nav-item--quiet" onClick={onNavigate}>
+              <Icon name="arrow-left" size={18} />
+              <span>Back to desk</span>
+            </a>
+          </div>
+        </div>
+      ) : null}
+    </>
+  )
+}
+
+function UserBlock({ me }: { me: SessionUser }) {
+  return (
+    <div className="user">
+      <span className="avatar" aria-hidden="true">{initials(me.name)}</span>
+      <span className="user-text">
+        <strong>{me.name}</strong>
+        <small title={me.email}>{me.email}</small>
+      </span>
+      {me.role === 'admin' ? <span className="user-role">Admin</span> : null}
+    </div>
+  )
+}
+
+function Sidebar({ me, route, admin = false, onSignOut }: { me: SessionUser, route: string, admin?: boolean, onSignOut: () => void }) {
+  return (
+    <aside className="sidebar">
+      <a className="sidebar-brand" href={admin ? '#/admin' : '#/'} aria-label="Desk home">
+        <BrandMark size={32} />
+        <span className="brand-name">Desk</span>
+        {admin ? <span className="brand-badge">Admin</span> : null}
+      </a>
+      <nav className="nav" aria-label="Main navigation">
+        <NavLinks route={route} admin={admin} />
+      </nav>
+      <div className="sidebar-foot">
+        <UserBlock me={me} />
+        <button type="button" className="signout" onClick={onSignOut}>
+          <Icon name="logout" size={17} />
+          <span>Sign out</span>
+        </button>
+      </div>
+    </aside>
+  )
+}
+
+function MobileBar(props: {
+  me: SessionUser
+  route: string
+  menuOpen: boolean
+  admin?: boolean
+  onOpenMenu: () => void
+  onCloseMenu: () => void
+  onSignOut: () => void
+}) {
+  return (
+    <>
+      <header className="mobilebar">
+        <a className="mobilebar-brand" href={props.admin ? '#/admin' : '#/'} aria-label="Desk home">
+          <BrandMark size={26} />
+          <span className="brand-name">Desk</span>
+          {props.admin ? <span className="brand-badge">Admin</span> : null}
+        </a>
+        <button
+          type="button"
+          className="icon-btn"
+          aria-label="Open menu"
+          aria-expanded={props.menuOpen}
+          aria-controls="mobile-menu"
+          onClick={props.onOpenMenu}
+        >
+          <Icon name="menu" size={20} />
+        </button>
+      </header>
+      {props.menuOpen ? <MobileMenu {...props} /> : null}
+    </>
+  )
+}
+
+function MobileMenu({ me, route, admin = false, onCloseMenu, onSignOut }: {
+  me: SessionUser
+  route: string
+  admin?: boolean
+  onCloseMenu: () => void
+  onSignOut: () => void
+}) {
+  const sheetRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    sheetRef.current?.focus({ preventScroll: true })
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCloseMenu()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onCloseMenu])
+
+  return (
+    <div ref={sheetRef} className="sheet" id="mobile-menu" role="dialog" aria-modal="true" aria-label="Menu" tabIndex={-1}>
+      <div className="sheet-head">
+        <Brand subtitle={admin ? 'Admin' : undefined} />
+        <button type="button" className="icon-btn icon-btn--onDark" aria-label="Close menu" onClick={onCloseMenu}>
+          <Icon name="close" size={20} />
+        </button>
+      </div>
+      <nav className="sheet-nav" aria-label="Mobile navigation">
+        <NavLinks route={route} admin={admin} onNavigate={onCloseMenu} />
+      </nav>
+      <div className="sheet-foot">
+        <UserBlock me={me} />
+        <button type="button" className="signout" onClick={onSignOut}>
+          <Icon name="logout" size={17} />
+          <span>Sign out</span>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function Boot() {
+  return (
+    <div className="boot" role="status" aria-live="polite">
+      <BrandMark size={38} />
+      <p>Loading the desk</p>
+    </div>
+  )
 }
 
 function Calls() {
@@ -235,56 +437,121 @@ function Calls() {
   const onCall = live === 'active' || live === 'ringing' || live === 'early' || live === 'trying' || live === 'requesting' || live === 'answering' || live === 'held'
 
   return (
-    <main>
-      <h1>Calls</h1>
-      <form className="dial" onSubmit={dial}>
-        <label htmlFor="number">Number</label>
-        <input id="number" type="tel" inputMode="tel" autoComplete="tel" value={number} onChange={(event) => setNumber(event.target.value)} placeholder="+14155551212" />
-        <button type="submit" className="primary" disabled={busy || onCall}>Call</button>
-        <button type="button" className="stop" disabled={!active} onClick={() => hangUp(active)}>Hang up</button>
-      </form>
-      <p role="status">Status: {busy && !live ? 'Connecting to Telnyx' : stateLabel(live)}{cause && (live === 'hangup' || live === 'destroy' || live === 'purge' || live === 'failed') ? `. Telnyx said ${cause}.` : ''}. The browser will ask for the microphone.</p>
-      {error ? <p role="alert">{error}</p> : null}
-      <p className="note">Minutes are saved from this browser. Cost stays pending until Telnyx prices the call. Refresh pulls the detail record. A public URL to <span className="path">/api/telnyx/webhook</span> is only needed if you want Telnyx to push the price itself.</p>
-      {calls == null ? <p className="waiting">Loading calls.</p> : calls.length === 0 ? (
-        <p>No calls yet. Enter a number and press Call. The record keeps the minutes and the Telnyx cost.</p>
-      ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">When</th>
-                <th scope="col">Direction</th>
-                <th scope="col">From</th>
-                <th scope="col">To</th>
-                <th scope="col">Minutes</th>
-                <th scope="col">Cost</th>
-                <th scope="col">Status</th>
-                <th scope="col">Price</th>
-              </tr>
-            </thead>
-            <tbody>
-              {calls.map((call) => (
-                <tr key={call.id}>
-                  <td>{when(call.startedAt)}</td>
-                  <td>{call.direction || '—'}</td>
-                  <td>{call.from || '—'}</td>
-                  <td>{call.to || '—'}</td>
-                  <td>{minutes(call.durationSeconds)}</td>
-                  <td>{money(call.costAmount, call.currency)}</td>
-                  <td>{call.status}</td>
-                  <td>
-                    <button type="button" disabled={refreshing === call.id} onClick={() => refresh(call.id)}>
-                      {refreshing === call.id ? 'Refreshing' : 'Refresh cost'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <>
+      <PageHead kicker="Voice" title="Calls" lead="Dial from the browser over Telnyx. Every call keeps its minutes and the price Telnyx returns." />
+
+      {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
+
+      <section className={onCall ? 'panel dial-panel is-live' : 'panel dial-panel'}>
+        <header className="panel-head">
+          <div>
+            <h2>New call</h2>
+            <p>Outbound calls use your Telnyx connection and the microphone in this browser.</p>
+          </div>
+          {onCall ? (
+            <span className="live-state is-on">
+              <span className="live-dot" aria-hidden="true" />
+              {stateLabel(live)}
+            </span>
+          ) : null}
+        </header>
+        <div className="panel-body">
+          <form className="dialer" onSubmit={dial}>
+            <div className="field dialer-field">
+              <label htmlFor="number">Number to call</label>
+              <div className="input-shell">
+                <span className="input-icon" aria-hidden="true"><Icon name="phone" size={17} /></span>
+                <input
+                  id="number"
+                  className="input input--number"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  value={number}
+                  onChange={(event) => setNumber(event.target.value)}
+                  placeholder="+1 415 555 1212"
+                />
+              </div>
+            </div>
+            <button type="submit" className="btn btn--primary" disabled={busy || onCall}>
+              <Icon name="phone" size={17} />
+              {busy ? 'Calling' : 'Call'}
+            </button>
+            <button type="button" className="btn btn--danger" disabled={!active} onClick={() => hangUp(active)}>
+              Hang up
+            </button>
+          </form>
+          <p className="call-status" role="status">
+            <span className={live ? 'live-dot is-on' : 'live-dot'} aria-hidden="true" />
+            <span>
+              <strong>{busy && !live ? 'Connecting to Telnyx' : stateLabel(live)}</strong>
+              {cause && (live === 'hangup' || live === 'destroy' || live === 'purge' || live === 'failed') ? `. Telnyx said ${cause}.` : '.'}
+              {' '}
+              <span className="muted">The browser asks for the microphone on the first call.</span>
+            </span>
+          </p>
+          <details className="fineprint">
+            <summary>Pricing and webhook</summary>
+            <p>Minutes are saved from this browser. Cost stays pending until Telnyx prices the call, and refresh pulls the detail record. A public URL to <code>/api/telnyx/webhook</code> is only needed if you want Telnyx to push the price itself.</p>
+          </details>
         </div>
-      )}
-    </main>
+      </section>
+
+      <section className="panel">
+        <header className="panel-head">
+          <div>
+            <h2>Call history</h2>
+            <p>Every call from this browser, newest first.</p>
+          </div>
+          {calls ? <span className="count">{calls.length}</span> : null}
+        </header>
+        {calls == null ? (
+          <div className="panel-body"><SkeletonLines count={4} /></div>
+        ) : calls.length === 0 ? (
+          <EmptyState icon="phone" title="No calls yet" text="Enter a number above and press Call. The record keeps the minutes and the Telnyx cost." />
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">When</th>
+                  <th scope="col">Direction</th>
+                  <th scope="col">Route</th>
+                  <th scope="col">Minutes</th>
+                  <th scope="col">Cost</th>
+                  <th scope="col">Status</th>
+                  <th scope="col"><span className="visually-hidden">Price</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {calls.map((call) => (
+                  <tr key={call.id}>
+                    <td data-label="When"><span className="cell-strong">{when(call.startedAt)}</span></td>
+                    <td data-label="Direction">{call.direction || '—'}</td>
+                    <td data-label="Route">
+                      <span className="route">
+                        <span className="mono">{call.from || '—'}</span>
+                        <Icon name="arrow-right" size={13} />
+                        <span className="mono">{call.to || '—'}</span>
+                      </span>
+                    </td>
+                    <td data-label="Minutes" className="mono">{minutes(call.durationSeconds)}</td>
+                    <td data-label="Cost" className={call.costAmount ? 'mono' : 'mono muted'}>{money(call.costAmount, call.currency)}</td>
+                    <td data-label="Status"><Chip tone={callTone(call.status)}>{statusLabel(call.status)}</Chip></td>
+                    <td data-label="Price" className="cell-action">
+                      <button type="button" className="btn btn--sm" disabled={refreshing === call.id} onClick={() => refresh(call.id)}>
+                        <Icon name="refresh" size={15} />
+                        {refreshing === call.id ? 'Checking' : 'Refresh cost'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </>
   )
 }
 
@@ -315,6 +582,7 @@ function WhatsApp() {
       summaryMessageCount: chat.summaryMessageCount,
       summaryStale: chat.summaryStale,
     } : null)
+    setMessages(null)
     try {
       setMessages(await readJson<Message[]>(await fetch(`/api/whatsapp/chats/${encodeURIComponent(jid)}/messages`)))
     } catch (reason) {
@@ -372,96 +640,176 @@ function WhatsApp() {
     }
   }
 
+  const connection = link?.connection ?? 'starting'
+  const connectionTone: Tone = connection === 'open' ? 'ok' : connection === 'starting' || connection === 'qr' ? 'warn' : 'bad'
+  const connectionNote = connection === 'open'
+    ? 'New texts arrive here as they reach the linked phone.'
+    : connection === 'qr'
+      ? 'Open WhatsApp on your phone, then Linked devices, then scan the code.'
+      : connection === 'starting'
+        ? 'The bridge is starting and will show a code when it is ready.'
+        : connection === 'close'
+          ? 'The link closed. The desk reconnects on its own.'
+          : 'The WhatsApp bridge is not running.'
+
   return (
-    <main>
-      <h1>WhatsApp</h1>
-      <section className="link" aria-label="WhatsApp link">
-        <p>Status: {link ? linkLabel(link.connection) : 'Checking'}.</p>
-        {link?.error ? <p role="alert">{link.error}</p> : null}
-        {link?.qrDataUrl ? (
-          <>
-            <p>Open WhatsApp on your phone, then Linked devices, then scan this code.</p>
-            <img src={link.qrDataUrl} alt="WhatsApp link code" width="280" height="280" />
-          </>
-        ) : null}
-      </section>
-      <section className="reply" aria-label="Auto-reply">
-        <h2>Auto-reply</h2>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={reply?.enabled ?? true}
-            onChange={(event) => {
-              const enabled = event.target.checked
-              setReply((current) => current ? { ...current, enabled } : current)
-              fetch('/api/whatsapp/reply', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled }),
-              }).then((response) => readJson<ReplyState>(response)).then(setReply).catch((reason: Error) => setError(reason.message))
-            }}
-          />
-          Reply in the pattern learned from your own texts
-        </label>
-        {reply == null ? <p className="waiting">Loading the reply pattern.</p> : reply.exampleCount < 3 ? (
-          <p>Replying in short lines until your own texts teach the pattern. {reply.exampleCount} of 3 replies seen. Answer from your phone and the next replies follow you.</p>
-        ) : (
-          <p>{reply.pattern || 'Reading your replies.'}</p>
-        )}
-      </section>
-      {error ? <p role="alert">{error}</p> : null}
-      <div className="split">
-        <section>
-          <h2>Chats</h2>
-          {chats == null ? <p className="waiting">Loading chats.</p> : chats.length === 0 ? (
-            <p>No texts yet. Messages that arrive after you link show up here.</p>
+    <>
+      <PageHead kicker="Messaging" title="WhatsApp" lead="One linked phone, every thread. Read the texts, keep a summary, and let replies follow your own pattern." />
+
+      {error ? <p className="notice notice--bad" role="alert">{error}</p> : null}
+
+      <div className="status-grid">
+        <section className="panel status-panel">
+          <header className="panel-head">
+            <div>
+              <h2>Connection</h2>
+              <p>Bridge status and the link code for this desk.</p>
+            </div>
+            <Chip tone={link ? connectionTone : 'neutral'} dot>{link ? linkLabel(connection) : 'Checking'}</Chip>
+          </header>
+          <div className="panel-body">
+            <p className="panel-note">{connectionNote}</p>
+            {link?.error ? <p className="notice notice--bad" role="alert">{link.error}</p> : null}
+            {link?.qrDataUrl ? (
+              <div className="qr-frame">
+                <img src={link.qrDataUrl} alt="WhatsApp link code" width="240" height="240" />
+                <p className="qr-note"><Icon name="qr" size={16} /> Scan within a minute; a new code appears when this one expires.</p>
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="panel">
+          <header className="panel-head">
+            <div>
+              <h2>Auto-reply</h2>
+              <p>Short replies in the pattern learned from your own texts.</p>
+            </div>
+            <Chip tone={reply?.enabled ?? true ? 'ok' : 'neutral'}>{reply?.enabled ?? true ? 'On' : 'Off'}</Chip>
+          </header>
+          <div className="panel-body">
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={reply?.enabled ?? true}
+                onChange={(event) => {
+                  const enabled = event.target.checked
+                  setReply((current) => current ? { ...current, enabled } : current)
+                  fetch('/api/whatsapp/reply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled }),
+                  }).then((response) => readJson<ReplyState>(response)).then(setReply).catch((reason: Error) => setError(reason.message))
+                }}
+              />
+              <span className="switch-ui" aria-hidden="true"><span className="switch-thumb" /></span>
+              <span className="switch-copy">
+                <strong>Reply in your own pattern</strong>
+                <small>Replies are held back while this is off.</small>
+              </span>
+            </label>
+            {reply == null ? <SkeletonLines count={2} /> : reply.exampleCount < 3 ? (
+              <p className="panel-note">Replying in short lines until your own texts teach the pattern. {reply.exampleCount} of 3 replies seen; answer from your phone and the next replies follow you.</p>
+            ) : (
+              <blockquote className="pattern">{reply.pattern || 'Reading your replies.'}</blockquote>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="messenger">
+        <section className="chat-column" aria-label="Chats">
+          <header className="messenger-head">
+            <div>
+              <h2>Chats</h2>
+              <p>{chats ? `${chats.length} ${chats.length === 1 ? 'thread' : 'threads'}` : 'Loading threads'}</p>
+            </div>
+          </header>
+          {chats == null ? (
+            <div className="messenger-body"><SkeletonLines count={4} /></div>
+          ) : chats.length === 0 ? (
+            <EmptyState icon="chat" title="No texts yet" text="Messages that arrive after you link show up here." />
           ) : (
-            <ul className="chats">
+            <ul className="chat-list">
               {chats.map((chat) => (
                 <li key={chat.jid}>
-                  <button type="button" aria-current={chat.jid === selected ? 'true' : undefined} onClick={() => openChat(chat.jid, chat)}>
-                    <span>{chatLabel(chat)}</span>
-                    <span>{chat.messageCount} {chat.messageCount === 1 ? 'text' : 'texts'}</span>
-                    <small>{chat.lastText}</small>
+                  <button type="button" className="chat-item" aria-current={chat.jid === selected ? 'true' : undefined} onClick={() => openChat(chat.jid, chat)}>
+                    <span className="avatar avatar--sm" aria-hidden="true">{initials(chatLabel(chat))}</span>
+                    <span className="chat-copy">
+                      <span className="chat-top">
+                        <strong>{chatLabel(chat)}</strong>
+                        <time dateTime={chat.lastMessageAt}>{shortDate(chat.lastMessageAt)}</time>
+                      </span>
+                      <span className="chat-preview">{chat.lastText || 'No text yet'}</span>
+                    </span>
+                    <span className="chat-count">{chat.messageCount}</span>
                   </button>
                 </li>
               ))}
             </ul>
           )}
         </section>
-        <section>
-          <h2>{current ? chatLabel(current) : 'Transcript'}</h2>
-          {!current ? <p>Select a chat to read the texts, the count, and a summary.</p> : (
+
+        <section className="thread-column" aria-label="Transcript">
+          {current ? (
             <>
-              <dl className="stats">
-                <div><dt>Texts</dt><dd>{current.messageCount}</dd></div>
-                <div><dt>First</dt><dd>{when(current.firstMessageAt)}</dd></div>
-                <div><dt>Last</dt><dd>{when(current.lastMessageAt)}</dd></div>
-              </dl>
-              <div className="summary">
-                <h3>Summary</h3>
-                {summary?.summaryText ? <p>{summary.summaryText}</p> : <p>No summary yet. Stats above stay either way.</p>}
-                {summary?.summaryStale ? <p>This summary covers {summary.summaryMessageCount} of {current.transcriptCount} messages.</p> : null}
-                <button type="button" className="primary" disabled={summarizing} onClick={summarize}>
+              <header className="thread-head">
+                <div className="thread-id">
+                  <span className="avatar" aria-hidden="true">{initials(chatLabel(current))}</span>
+                  <div>
+                    <h2>{chatLabel(current)}</h2>
+                    <p>{current.messageCount} {current.messageCount === 1 ? 'text' : 'texts'} received · {current.transcriptCount} in the transcript</p>
+                  </div>
+                </div>
+                <button type="button" className="btn btn--secondary" disabled={summarizing} onClick={summarize}>
+                  <Icon name="refresh" size={15} />
                   {summarizing ? 'Writing summary' : 'Generate summary'}
                 </button>
+              </header>
+              <dl className="thread-stats">
+                <div><dt>Texts</dt><dd>{current.messageCount}</dd></div>
+                <div><dt>First text</dt><dd>{when(current.firstMessageAt)}</dd></div>
+                <div><dt>Latest</dt><dd>{when(current.lastMessageAt)}</dd></div>
+              </dl>
+              <div className="summary-box">
+                <div className="summary-head">
+                  <h3>Summary</h3>
+                  {summary?.summaryStale ? <Chip tone="warn">Covers {summary.summaryMessageCount} of {current.transcriptCount}</Chip> : summary?.summaryText ? <Chip tone="ok">Current</Chip> : null}
+                </div>
+                {summary?.summaryText
+                  ? <p className="summary-text">{summary.summaryText}</p>
+                  : <p className="summary-text muted">No summary yet. Generate one to read the thread at a glance; the stats above stay either way.</p>}
               </div>
-              {messages == null ? <p className="waiting">Loading texts.</p> : (
-                <ol className="log">
+              {messages == null ? (
+                <div className="thread-body"><SkeletonLines count={4} /></div>
+              ) : messages.length === 0 ? (
+                <EmptyState icon="chat" title="No texts in this thread" text="The transcript fills as messages arrive." />
+              ) : (
+                <ol className="message-list">
                   {messages.map((message) => (
-                    <li key={message.id} className={message.fromMe ? 'mine' : undefined}>
-                      <time dateTime={message.timestamp}>{when(message.timestamp)}</time>
-                      <strong>{message.fromMe ? 'You' : message.pushName || 'Unknown'}</strong>
-                      <p>{message.body}</p>
+                    <li key={message.id} className={message.fromMe ? 'message message--mine' : 'message'}>
+                      <div className="message-meta">
+                        <strong>{message.fromMe ? 'You' : message.pushName || 'Unknown'}</strong>
+                        <time dateTime={message.timestamp}>{when(message.timestamp)}</time>
+                      </div>
+                      <p className="message-body">{message.body}</p>
                     </li>
                   ))}
                 </ol>
               )}
             </>
+          ) : (
+            <div className="thread-empty">
+              <EmptyState icon="chat" title="Pick a chat" text="The transcript, its counts and a summary open here.">
+                {chats && chats.length > 0 ? (
+                  <button type="button" className="btn btn--secondary" onClick={() => openChat(chats[0].jid, chats[0])}>Open the newest chat</button>
+                ) : null}
+              </EmptyState>
+            </div>
           )}
         </section>
       </div>
-    </main>
+    </>
   )
 }
 
