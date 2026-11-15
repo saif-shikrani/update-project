@@ -15,7 +15,6 @@ A local web app on a Node API. People sign in, buy Telnyx numbers, and place cal
 ## Out of scope
 
 - **SMS.** No Telnyx messaging. Phone work is SIP voice calls only.
-- **Call audio recording.** Telnyx stores recordings when enabled on the connection/outbound voice profile. The app stores the recording URL metadata, proxies playback to admins, and can generate an admin-only Gemini summary.
 - **Per-user WhatsApp.** There is one linked WhatsApp account, and only the admin can open it.
 
 ## Calls
@@ -28,6 +27,7 @@ Telnyx webhooks on the connection update the call row:
 - Duration is answered-to-hangup, stored in seconds and shown in minutes. Unanswered calls store `0`.
 - `call.cost` sets billed seconds, amount, and currency. Until that webhook arrives, cost stays pending. Telnyx prices the call after hangup.
 - A refresh action pulls the Telnyx detail record by call session id if the cost webhook never arrives.
+- `call.recording.saved` downloads the audio into `data/call-recordings` and stores its path, size, MIME type, and Telnyx URL in SQLite. Admin playback and Gemini summaries use the stored file first.
 
 Stored per call: Telnyx session and leg ids, direction, from, to, started / answered / ended timestamps, duration, billable seconds, cost, currency, hangup cause, and status. Outbound dialing is the feature. Inbound legs are stored with the same shape if Telnyx sends them.
 

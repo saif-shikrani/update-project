@@ -1,11 +1,12 @@
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import Fastify from 'fastify'
-import { getCall, listAdminCalls, listCalls, listChats, listMessages, saveCallSummary, saveSummary, upsertCall } from './db.ts'
+import { getCall, listAdminCalls, listCalls, listChats, listMessages, mediaMessage, saveCallSummary, saveSummary, upsertCall } from './db.ts'
 import { loadEnv } from './env.ts'
 import { transcriptLines } from './logic.ts'
 import { geminiAudio, geminiText } from './gemini.ts'
 import { applyWebhook, checkWebhook, loginToken, refreshCallCost } from './telnyx.ts'
+import { downloadCallRecording } from './recordings.ts'
 import { replyState, setAutoReply } from './reply.ts'
 import { maxMediaBytes, sendMedia, sendText, startWhatsApp, subscribeWhatsApp, whatsAppStatus } from './whatsapp.ts'
 import { login, logout, publicUser, readSession, sessionCookie, signup, userFromToken, type AuthUser } from './auth.ts'
@@ -200,23 +201,39 @@ app.get('/api/admin/calls', async (request) => {
 app.get<{ Params: { id: string } }>('/api/admin/calls/:id/recording', async (request, reply) => {
   requireAdmin(request)
   const found = getCall(Number(request.params.id))
+  if (found?.row.recording_path && existsSync(found.row.recording_path)) {
+    reply.type(found.row.recording_mime_type || 'audio/mpeg')
+    return reply.send(createReadStream(found.row.recording_path))
+  }
   const url = found?.row.recording_url
   if (!url) return reply.code(404).send({ error: 'No recording is available for this call.' })
-  const recording = await fetch(url)
-  if (!recording.ok) return reply.code(502).send({ error: 'The recording could not be fetched from Telnyx.' })
-  reply.type(recording.headers.get('content-type') || 'audio/mpeg')
-  return reply.send(Buffer.from(await recording.arrayBuffer()))
+  try {
+    const saved = await downloadCallRecording(found!.row.id, url, found!.row.recording_format)
+    reply.type(saved.contentType)
+    return reply.send(createReadStream(saved.path))
+  } catch {
+    return reply.code(502).send({ error: 'The recording could not be fetched from Telnyx.' })
+  }
 })
 
 app.post<{ Params: { id: string } }>('/api/admin/calls/:id/summary', async (request, reply) => {
   requireAdmin(request)
   const found = getCall(Number(request.params.id))
   const url = found?.row.recording_url
-  if (!found || !url) return reply.code(404).send({ error: 'No recording is available for this call.' })
-  const recording = await fetch(url)
-  if (!recording.ok) return reply.code(502).send({ error: 'The recording could not be fetched from Telnyx.' })
-  const contentType = recording.headers.get('content-type') || (found.row.recording_format === 'wav' ? 'audio/wav' : 'audio/mpeg')
-  const audio = Buffer.from(await recording.arrayBuffer())
+  if (!found || (!url && !found.row.recording_path)) return reply.code(404).send({ error: 'No recording is available for this call.' })
+  let contentType = found.row.recording_mime_type || (found.row.recording_format === 'wav' ? 'audio/wav' : 'audio/mpeg')
+  let audio: Buffer
+  if (found.row.recording_path && existsSync(found.row.recording_path)) {
+    audio = readFileSync(found.row.recording_path)
+  } else {
+    try {
+      const saved = await downloadCallRecording(found.row.id, url!, found.row.recording_format)
+      contentType = saved.contentType
+      audio = readFileSync(saved.path)
+    } catch {
+      return reply.code(502).send({ error: 'The recording could not be fetched from Telnyx.' })
+    }
+  }
   if (audio.length > 25 * 1024 * 1024) return reply.code(413).send({ error: 'The recording is too large to summarize.' })
   const model = process.env.GEMINI_MODEL?.trim() || 'gemini-3.6-flash'
   const text = await geminiAudio(
@@ -238,7 +255,16 @@ app.post('/api/telnyx/webhook', async (request, reply) => {
   if (!ok) return reply.code(401).send({ error: 'Telnyx signature was rejected.' })
   const eventType = body.json.data?.event_type || body.json.event_type
   const payload = body.json.data?.payload || body.json.payload
-  if (eventType && payload) applyWebhook(eventType, payload)
+  if (eventType && payload) {
+    const result = applyWebhook(eventType, payload)
+    if (eventType === 'call.recording.saved' && result?.row.recording_url && !result.row.recording_path) {
+      try {
+        await downloadCallRecording(result.row.id, result.row.recording_url, result.row.recording_format)
+      } catch (error) {
+        request.log.error({ err: error, callId: result.row.id }, 'Could not store Telnyx call recording')
+      }
+    }
+  }
   return { ok: true }
 })
 

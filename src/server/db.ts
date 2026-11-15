@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS calls (
   recording_format TEXT,
   recording_started_at TEXT,
   recording_ended_at TEXT,
+  recording_path TEXT,
+  recording_size INTEGER,
+  recording_mime_type TEXT,
   summary_text TEXT,
   summary_model TEXT,
   summary_at TEXT,
@@ -148,6 +151,8 @@ for (const column of [
   'recording_format',
   'recording_started_at',
   'recording_ended_at',
+  'recording_path',
+  'recording_mime_type',
   'summary_text',
   'summary_model',
   'summary_at',
@@ -155,6 +160,9 @@ for (const column of [
   if (!callColumns.some((entry) => entry.name === column)) {
     db.exec(`ALTER TABLE calls ADD COLUMN ${column} TEXT`)
   }
+}
+if (!callColumns.some((entry) => entry.name === 'recording_size')) {
+  db.exec('ALTER TABLE calls ADD COLUMN recording_size INTEGER')
 }
 
 type CallRow = {
@@ -179,6 +187,9 @@ type CallRow = {
   recording_format: string | null
   recording_started_at: string | null
   recording_ended_at: string | null
+  recording_path: string | null
+  recording_size: number | null
+  recording_mime_type: string | null
   summary_text: string | null
   summary_model: string | null
   summary_at: string | null
@@ -224,7 +235,9 @@ export function callJson(row: CallRow) {
     costAmount: row.cost_amount,
     currency: row.currency,
     hangupCause: row.hangup_cause,
-    recordingAvailable: Boolean(row.recording_url),
+    recordingAvailable: Boolean(row.recording_url || row.recording_path),
+    recordingStored: Boolean(row.recording_path),
+    recordingSize: row.recording_size,
   }
 }
 
@@ -331,11 +344,22 @@ export function listAdminCalls() {
       recordingFormat: call.recording_format,
       recordingStartedAt: call.recording_started_at,
       recordingEndedAt: call.recording_ended_at,
+      recordingStored: Boolean(call.recording_path),
+      recordingSize: call.recording_size,
       summaryText: call.summary_text,
       summaryModel: call.summary_model,
       summaryAt: call.summary_at,
     }
   })
+}
+
+export function saveCallRecording(id: number, path: string, size: number, mimeType: string) {
+  db.prepare(`
+    UPDATE calls
+    SET recording_path = ?, recording_size = ?, recording_mime_type = ?
+    WHERE id = ?
+  `).run(path, size, mimeType, id)
+  return getCall(id)
 }
 
 export function saveCallSummary(id: number, text: string, model: string) {
