@@ -54,6 +54,19 @@ export function applyWebhook(eventType: string, payload: Record<string, unknown>
       billableSeconds: cost.billableSeconds,
     })
   }
+  if (eventType === 'call.recording.saved') {
+    const urls = payload.recording_urls
+    const publicUrls = payload.public_recording_urls
+    const url = recordingUrl(urls) || recordingUrl(publicUrls)
+    if (!url) return null
+    return upsertCall({
+      ...patch,
+      recordingUrl: url,
+      recordingFormat: recordingFormat(urls, publicUrls),
+      recordingStartedAt: text(payload.recording_started_at),
+      recordingEndedAt: text(payload.recording_ended_at),
+    })
+  }
   return null
 }
 
@@ -250,4 +263,24 @@ function text(value: unknown): string | null {
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function recordingUrl(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null
+  for (const format of ['mp3', 'wav']) {
+    const url = (value as Record<string, unknown>)[format]
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) return url
+  }
+  return null
+}
+
+function recordingFormat(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (!value || typeof value !== 'object') continue
+    for (const format of ['mp3', 'wav']) {
+      const url = (value as Record<string, unknown>)[format]
+      if (typeof url === 'string' && /^https?:\/\//i.test(url)) return format
+    }
+  }
+  return null
 }
