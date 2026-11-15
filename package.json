@@ -1,0 +1,33 @@
+{
+  "name": "telnyx-baileys-desk",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx src/dev.ts",
+    "start": "tsx src/server/index.ts",
+    "build": "vite build",
+    "test": "tsx --test src/server/logic.test.ts"
+  },
+  "dependencies": {
+    "@telnyx/webrtc": "^2.25.0",
+    "baileys": "github:WhiskeySockets/Baileys#81345beb67ca3fb0eb79a2c20cd4ac24da517929",
+    "fastify": "^5.6.1",
+    "pino": "^9.6.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2"
+  }
+}

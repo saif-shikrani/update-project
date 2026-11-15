@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "hooks": {
+    "postToolUse": [
+      {
+        "command": "[ ! -f \".cursor/skills/impeccable/scripts/impeccable\" ] || \".cursor/skills/impeccable/scripts/impeccable\" hook",
+        "matcher": "^Write$",
+        "timeout": 5
+      }
+    ],
+    "sessionStart": [
+      {
+        "command": "node \"C:/Users/Umair/OneDrive/Desktop/Telnyx and Bailyeys/ponytail/hooks/ponytail-activate.js\"",
+        "timeout": 15
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "node \"C:/Users/Umair/OneDrive/Desktop/Telnyx and Bailyeys/ponytail/hooks/ponytail-mode-tracker.js\"",
+        "timeout": 15
+      }
+    ]
+  }
+}
