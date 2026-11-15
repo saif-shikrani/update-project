@@ -29,5 +29,10 @@
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vite": "^7.2.2"
+  },
+  "allowScripts": {
+    "github:WhiskeySockets/Baileys#81345beb67ca3fb0eb79a2c20cd4ac24da517929": true,
+    "esbuild@0.28.2": true,
+    "protobufjs@7.6.6": true
   }
 }
