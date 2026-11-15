@@ -47,6 +47,24 @@ type CreditRequest = {
   createdAt: string
 }
 
+type AdminCall = {
+  id: number
+  userName: string | null
+  userEmail: string | null
+  direction: string | null
+  from: string | null
+  to: string | null
+  status: string
+  startedAt: string | null
+  durationSeconds: number | null
+  costAmount: string | null
+  currency: string | null
+  recordingAvailable: boolean
+  recordingFormat: string | null
+  summaryText: string | null
+  summaryAt: string | null
+}
+
 const countries = [
   ['US', 'United States'],
   ['CA', 'Canada'],
@@ -651,10 +669,16 @@ export function BillingPage() {
 
 export function AdminPage() {
   const [rows, setRows] = useState<CreditRequest[] | null>(null)
+  const [calls, setCalls] = useState<AdminCall[] | null>(null)
   const [error, setError] = useState('')
 
   async function load() {
-    setRows(await readJson<CreditRequest[]>(await fetch('/api/billing/requests')))
+    const [requests, callRows] = await Promise.all([
+      readJson<CreditRequest[]>(await fetch('/api/billing/requests')),
+      readJson<AdminCall[]>(await fetch('/api/admin/calls')),
+    ])
+    setRows(requests)
+    setCalls(callRows)
   }
 
   useEffect(() => {
@@ -668,6 +692,16 @@ export function AdminPage() {
       await load()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'The decision was not saved.')
+    }
+  }
+
+  async function summarizeCall(id: number) {
+    setError('')
+    try {
+      await readJson(await fetch(`/api/admin/calls/${id}/summary`, { method: 'POST' }))
+      await load()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The call summary was not saved.')
     }
   }
 

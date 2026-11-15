@@ -25,6 +25,13 @@ CREATE TABLE IF NOT EXISTS calls (
   cost_amount TEXT,
   currency TEXT,
   hangup_cause TEXT,
+  recording_url TEXT,
+  recording_format TEXT,
+  recording_started_at TEXT,
+  recording_ended_at TEXT,
+  summary_text TEXT,
+  summary_model TEXT,
+  summary_at TEXT,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS wa_chats (
@@ -136,6 +143,19 @@ if (!callColumns.some((column) => column.name === 'user_id')) {
 if (!callColumns.some((column) => column.name === 'charged')) {
   db.exec('ALTER TABLE calls ADD COLUMN charged INTEGER NOT NULL DEFAULT 0')
 }
+for (const column of [
+  'recording_url',
+  'recording_format',
+  'recording_started_at',
+  'recording_ended_at',
+  'summary_text',
+  'summary_model',
+  'summary_at',
+]) {
+  if (!callColumns.some((entry) => entry.name === column)) {
+    db.exec(`ALTER TABLE calls ADD COLUMN ${column} TEXT`)
+  }
+}
 
 type CallRow = {
   id: number
@@ -155,6 +175,13 @@ type CallRow = {
   cost_amount: string | null
   currency: string | null
   hangup_cause: string | null
+  recording_url: string | null
+  recording_format: string | null
+  recording_started_at: string | null
+  recording_ended_at: string | null
+  summary_text: string | null
+  summary_model: string | null
+  summary_at: string | null
   created_at: string
   user_id?: number | null
   charged?: number | null
@@ -176,6 +203,10 @@ export type CallPatch = {
   costAmount?: string | null
   currency?: string | null
   billableSeconds?: number | null
+  recordingUrl?: string | null
+  recordingFormat?: string | null
+  recordingStartedAt?: string | null
+  recordingEndedAt?: string | null
 }
 
 export function callJson(row: CallRow) {
@@ -193,6 +224,7 @@ export function callJson(row: CallRow) {
     costAmount: row.cost_amount,
     currency: row.currency,
     hangupCause: row.hangup_cause,
+    recordingAvailable: Boolean(row.recording_url),
   }
 }
 
@@ -234,17 +266,23 @@ export function upsertCall(patch: CallPatch, userId?: number) {
     cost_amount: patch.costAmount || existing?.cost_amount || null,
     currency: patch.currency || existing?.currency || null,
     hangup_cause: patch.hangupCause || existing?.hangup_cause || null,
+    recording_url: patch.recordingUrl || existing?.recording_url || null,
+    recording_format: patch.recordingFormat || existing?.recording_format || null,
+    recording_started_at: patch.recordingStartedAt || existing?.recording_started_at || null,
+    recording_ended_at: patch.recordingEndedAt || existing?.recording_ended_at || null,
   }
   if (!existing) {
     const result = db.prepare(`
       INSERT INTO calls (
         client_call_id, call_session_id, call_leg_id, call_control_id, direction,
         from_number, to_number, status, started_at, answered_at, ended_at,
-        duration_seconds, billable_seconds, cost_amount, currency, hangup_cause, created_at, user_id
+        duration_seconds, billable_seconds, cost_amount, currency, hangup_cause,
+        recording_url, recording_format, recording_started_at, recording_ended_at, created_at, user_id
       ) VALUES (
         :client_call_id, :call_session_id, :call_leg_id, :call_control_id, :direction,
         :from_number, :to_number, :status, :started_at, :answered_at, :ended_at,
-        :duration_seconds, :billable_seconds, :cost_amount, :currency, :hangup_cause, :created_at, :user_id
+        :duration_seconds, :billable_seconds, :cost_amount, :currency, :hangup_cause,
+        :recording_url, :recording_format, :recording_started_at, :recording_ended_at, :created_at, :user_id
       )
     `).run({ ...values, created_at: new Date().toISOString(), user_id: userId ?? null })
     return getCall(Number(result.lastInsertRowid))!
@@ -266,10 +304,47 @@ export function upsertCall(patch: CallPatch, userId?: number) {
       billable_seconds = :billable_seconds,
       cost_amount = :cost_amount,
       currency = :currency,
-      hangup_cause = :hangup_cause
+      hangup_cause = :hangup_cause,
+      recording_url = :recording_url,
+      recording_format = :recording_format,
+      recording_started_at = :recording_started_at,
+      recording_ended_at = :recording_ended_at,
+      user_id = COALESCE(user_id, :user_id)
     WHERE id = :id
-  `).run({ ...values, id: existing.id })
+  `).run({ ...values, user_id: userId ?? null, id: existing.id })
   return getCall(existing.id)!
+}
+
+export function listAdminCalls() {
+  return db.prepare(`
+    SELECT c.*, u.name AS user_name, u.email AS user_email
+    FROM calls c
+    LEFT JOIN users u ON u.id = c.user_id
+    ORDER BY COALESCE(c.started_at, c.created_at) DESC
+    LIMIT 200
+  `).all().map((row) => {
+    const call = row as CallRow & { user_name: string | null, user_email: string | null }
+    return {
+      ...callJson(call),
+      userName: call.user_name,
+      userEmail: call.user_email,
+      recordingFormat: call.recording_format,
+      recordingStartedAt: call.recording_started_at,
+      recordingEndedAt: call.recording_ended_at,
+      summaryText: call.summary_text,
+      summaryModel: call.summary_model,
+      summaryAt: call.summary_at,
+    }
+  })
+}
+
+export function saveCallSummary(id: number, text: string, model: string) {
+  db.prepare(`
+    UPDATE calls
+    SET summary_text = ?, summary_model = ?, summary_at = ?
+    WHERE id = ?
+  `).run(text, model, new Date().toISOString(), id)
+  return listAdminCalls().find((call) => call.id === id) ?? null
 }
 
 function findCall(patch: CallPatch): CallRow | null {
