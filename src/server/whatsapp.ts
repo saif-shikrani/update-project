@@ -1,8 +1,15 @@
+import { randomUUID } from 'node:crypto'
+import { mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { extname, join } from 'node:path'
 import pino from 'pino'
 import QRCode from 'qrcode'
-import { hasReplied, listHistoryAnchors, listUnanswered, markReplied, saveText, setChatName, userRepliedAfter } from './db.ts'
-import { extractText, messageTimeIso } from './logic.ts'
+import { hasReplied, listHistoryAnchors, listUnanswered, markReplied, saveMessage, setChatName, userRepliedAfter } from './db.ts'
+import { extractText, extractWaMedia, messageTimeIso, type WaMediaKind } from './logic.ts'
 import { draftReply, learnReplyPattern } from './reply.ts'
+
+const MEDIA_ROOT = 'data/whatsapp-media'
+const MAX_MEDIA_BYTES = 25 * 1024 * 1024
+mkdirSync(MEDIA_ROOT, { recursive: true })
 
 export type WaStatus = {
   connection: 'starting' | 'qr' | 'open' | 'close' | 'error'
@@ -69,9 +76,9 @@ async function connect() {
     sock.ev.on('connection.update', (update: { connection?: string, qr?: string, lastDisconnect?: { error?: { output?: { statusCode?: number } } } }) => {
       void onConnection(update)
     })
-    sock.ev.on('messages.upsert', (upsert: { type?: string, messages?: IncomingMessage[] }) => onMessages(upsert))
+    sock.ev.on('messages.upsert', (upsert: { type?: string, messages?: IncomingMessage[] }) => { void onMessages(upsert) })
     sock.ev.on('messaging-history.set', (history: { messages?: IncomingMessage[] }) => {
-      onMessages({ type: 'append', messages: history.messages })
+      void onMessages({ type: 'append', messages: history.messages })
       scheduleLearn()
       scheduleCatchUp()
     })
@@ -116,7 +123,7 @@ async function onConnection(update: { connection?: string, qr?: string, lastDisc
   }, 2000)
 }
 
-function onMessages(upsert: { type?: string, messages?: IncomingMessage[] }) {
+async function onMessages(upsert: { type?: string, messages?: IncomingMessage[] }) {
   if (upsert.type !== 'notify' && upsert.type !== 'append') return
   let saved = false
   for (const message of upsert.messages ?? []) {
@@ -124,28 +131,49 @@ function onMessages(upsert: { type?: string, messages?: IncomingMessage[] }) {
     const id = message.key?.id
     if (!jid || !id || jid === 'status@broadcast' || jid.endsWith('@broadcast')) continue
     const text = extractText(message.message)
-    if (!text) continue
+    const media = extractWaMedia(message.message)
+    if (!text && !media) continue
     const fromMe = Boolean(message.key?.fromMe)
-    const source = fromMe && isAutomatic(jid, id, text) ? 'auto' : 'user'
+    const body = text || (media?.kind === 'image' ? '[Image]' : '[Document]')
+    const source = fromMe && isAutomatic(jid, id, body) ? 'auto' : 'user'
     const timestamp = messageTimeIso(message.messageTimestamp)
-    const inserted = saveText({
+    let mediaPath: string | null = null
+    let mediaSize: number | null = null
+    if (media) {
+      try {
+        const downloaded = await downloadIncomingMedia(message, media)
+        mediaPath = downloaded.path
+        mediaSize = downloaded.size
+      } catch (error) {
+        console.error(error instanceof Error ? error.message : error)
+        continue
+      }
+    }
+    const inserted = saveMessage({
       waMessageId: id,
       chatJid: jid,
       sender: fromMe ? 'me' : message.key?.participant || jid,
       pushName: fromMe ? null : message.pushName ?? null,
-      body: text,
+      body,
       timestamp,
       displayName: fromMe || jid.endsWith('@g.us') ? null : message.pushName ?? null,
       fromMe,
       source,
+      kind: media?.kind ?? 'text',
+      mimeType: media?.mimeType ?? null,
+      fileName: media?.fileName ?? null,
+      mediaPath,
+      mediaSize,
+      caption: media?.caption ?? null,
     })
     if (!inserted) continue
     saved = true
     if (fromMe && source === 'user') scheduleLearn()
     const age = Date.now() - Date.parse(timestamp)
-    if (!fromMe && upsert.type === 'notify' && !jid.endsWith('@g.us') && age >= 0 && age < 2 * 60 * 1000) {
-      scheduleAutoReply(jid, id, text, timestamp)
+    if (!fromMe && !media && upsert.type === 'notify' && !jid.endsWith('@g.us') && age >= 0 && age < 2 * 60 * 1000) {
+      scheduleAutoReply(jid, id, body, timestamp)
     }
+
   }
   if (saved) publish(status, { type: 'message' })
 }
@@ -217,6 +245,132 @@ function isAutomatic(jid: string, id: string, body: string) {
   }
   return false
 }
+
+async function downloadIncomingMedia(message: IncomingMessage, media: { kind: WaMediaKind, mimeType: string | null, fileName: string | null }) {
+  const declaredSize = findMediaSize(message.message)
+  if (declaredSize && declaredSize > MAX_MEDIA_BYTES) throw new Error('WhatsApp media is larger than the 25 MB limit.')
+  if (!socket?.updateMediaMessage) throw new Error('WhatsApp media download is not ready.')
+  const baileys = await import('baileys')
+  const buffer = await baileys.downloadMediaMessage(
+    message as never,
+    'buffer',
+    {},
+    { reuploadRequest: socket.updateMediaMessage, logger: pino({ level: 'silent' }) },
+  )
+  if (buffer.length > MAX_MEDIA_BYTES) throw new Error('WhatsApp media is larger than the 25 MB limit.')
+  const path = storeMedia(buffer, media.mimeType, media.fileName)
+  return { path, size: buffer.length }
+}
+
+export async function sendText(jid: string, body: string) {
+    if (!socket?.sendMessage) throw new Error('WhatsApp is not connected.')
+    const clean = body.trim()
+    if (!clean) throw new Error('Message text is required.')
+    const sent = await socket.sendMessage(jid, { text: clean })
+    const id = sent?.key?.id
+    if (!id) throw new Error('WhatsApp did not return a message id.')
+    saveMessage({
+      waMessageId: String(id),
+      chatJid: jid,
+      sender: 'me',
+      pushName: null,
+      body: clean,
+      timestamp: new Date().toISOString(),
+      displayName: null,
+      fromMe: true,
+      source: 'user',
+      kind: 'text',
+      mimeType: null,
+      fileName: null,
+      mediaPath: null,
+      mediaSize: null,
+      caption: clean,
+    })
+    publish(status, { type: 'message' })
+    return { id: String(id) }
+  }
+
+export async function sendMedia(jid: string, input: {
+    buffer: Buffer
+    mimeType: string
+    fileName: string | null
+    caption: string | null
+  }) {
+    if (!socket?.sendMessage) throw new Error('WhatsApp is not connected.')
+    if (input.buffer.length > MAX_MEDIA_BYTES) throw new Error('Media is larger than the 25 MB limit.')
+    const kind: WaMediaKind = input.mimeType.startsWith('image/') ? 'image' : 'document'
+    const fileName = input.fileName || (kind === 'image' ? 'image' : 'document')
+    const mediaPath = storeMedia(input.buffer, input.mimeType, fileName)
+    const content = kind === 'image'
+      ? { image: input.buffer, caption: input.caption || undefined, mimetype: input.mimeType }
+      : { document: input.buffer, mimetype: input.mimeType, fileName, caption: input.caption || undefined }
+    try {
+      const sent = await socket.sendMessage(jid, content)
+      const id = sent?.key?.id
+      if (!id) throw new Error('WhatsApp did not return a message id.')
+      saveMessage({
+        waMessageId: String(id),
+        chatJid: jid,
+        sender: 'me',
+        pushName: null,
+        body: input.caption || (kind === 'image' ? '[Image]' : '[Document]'),
+        timestamp: new Date().toISOString(),
+        displayName: null,
+        fromMe: true,
+        source: 'user',
+        kind,
+        mimeType: input.mimeType,
+        fileName,
+        mediaPath,
+        mediaSize: input.buffer.length,
+        caption: input.caption,
+      })
+      publish(status, { type: 'message' })
+      return { id: String(id) }
+    } catch (error) {
+      unlinkSync(mediaPath)
+      throw error
+    }
+  }
+
+export function maxMediaBytes() {
+  return MAX_MEDIA_BYTES
+}
+
+function storeMedia(buffer: Buffer, mimeType: string | null, fileName: string | null) {
+    const extension = mediaExtension(mimeType, fileName)
+    const relative = join(MEDIA_ROOT, `${randomUUID()}${extension}`)
+    writeFileSync(relative, buffer, { flag: 'wx' })
+    return relative
+  }
+
+function mediaExtension(mimeType: string | null, fileName: string | null) {
+    const known = mimeType?.split('/')[1]?.replace(/[^a-z0-9]/gi, '').toLowerCase()
+    const original = fileName ? extname(fileName).toLowerCase().replace(/[^a-z0-9.]/g, '') : ''
+    if (original && original.length <= 8) return original
+    if (known === 'jpeg') return '.jpg'
+    if (known && known.length <= 8) return `.${known}`
+    return ''
+  }
+
+function findMediaSize(message: unknown): number | null {
+    if (!message || typeof message !== 'object') return null
+    const record = message as Record<string, unknown>
+    for (const key of ['imageMessage', 'documentMessage']) {
+      const value = record[key]
+      if (value && typeof value === 'object') {
+        const size = Number((value as { fileLength?: unknown }).fileLength)
+        if (Number.isFinite(size) && size > 0) return size
+      }
+    }
+    for (const key of ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'documentWithCaptionMessage']) {
+      const wrapped = record[key]
+      const inner = wrapped && typeof wrapped === 'object' ? (wrapped as { message?: unknown }).message : null
+      const size = findMediaSize(inner)
+      if (size) return size
+    }
+    return null
+  }
 
 function onChats(chats: { id?: string | null, name?: string | null }[]) {
   for (const chat of chats ?? []) {

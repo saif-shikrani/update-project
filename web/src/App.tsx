@@ -35,6 +35,11 @@ type Message = {
   body: string
   timestamp: string
   fromMe: boolean
+  kind: 'text' | 'image' | 'document'
+  mimeType: string | null
+  fileName: string | null
+  mediaSize: number | null
+  caption: string | null
 }
 
 type ReplyState = {
@@ -564,7 +569,11 @@ function WhatsApp() {
   const [error, setError] = useState('')
   const [summarizing, setSummarizing] = useState(false)
   const [reply, setReply] = useState<ReplyState | null>(null)
+  const [draft, setDraft] = useState('')
+  const [attachment, setAttachment] = useState<File | null>(null)
+  const [sending, setSending] = useState(false)
   const selectedRef = useRef('')
+  const fileRef = useRef<HTMLInputElement>(null)
 
   async function loadChats() {
     const rows = await readJson<Chat[]>(await fetch('/api/whatsapp/chats'))
@@ -637,6 +646,50 @@ function WhatsApp() {
       setError(reason instanceof Error ? reason.message : 'Summary failed.')
     } finally {
       setSummarizing(false)
+    }
+  }
+
+  async function sendMessage(event: FormEvent) {
+      event.preventDefault()
+      if (!selected || (!draft.trim() && !attachment)) return
+      setSending(true)
+      setError('')
+      try {
+        if (attachment) {
+          const response = await fetch(`/api/whatsapp/chats/${encodeURIComponent(selected)}/media`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'X-Mime-Type': attachment.type || 'application/octet-stream',
+              'X-File-Name': attachment.name,
+              ...(draft.trim() ? { 'X-Caption': draft.trim() } : {}),
+            },
+            body: attachment,
+          })
+          await readJson<{ id: string }>(response)
+        } else {
+          await readJson<{ id: string }>(await fetch(`/api/whatsapp/chats/${encodeURIComponent(selected)}/messages`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: draft.trim() }),
+          }))
+        }
+        setDraft('')
+        setAttachment(null)
+        if (fileRef.current) fileRef.current.value = ''
+        const rows = await loadChats()
+        const chat = rows.find((item) => item.jid === selected)
+        if (chat) setSummary({
+          summaryText: chat.summaryText,
+          summaryAt: chat.summaryAt,
+          summaryMessageCount: chat.summaryMessageCount,
+          summaryStale: chat.summaryStale,
+        })
+        setMessages(await readJson<Message[]>(await fetch(`/api/whatsapp/chats/${encodeURIComponent(selected)}/messages`)))
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : 'The message could not be sent.')
+      } finally {
+        setSending(false)
     }
   }
 
@@ -792,11 +845,53 @@ function WhatsApp() {
                         <strong>{message.fromMe ? 'You' : message.pushName || 'Unknown'}</strong>
                         <time dateTime={message.timestamp}>{when(message.timestamp)}</time>
                       </div>
-                      <p className="message-body">{message.body}</p>
+                      {message.kind === 'image' ? (
+                        <a className="message-image" href={`/api/whatsapp/media/${message.id}`} target="_blank" rel="noreferrer">
+                          <img src={`/api/whatsapp/media/${message.id}`} alt={message.caption || 'WhatsApp image'} loading="lazy" />
+                        </a>
+                      ) : message.kind === 'document' ? (
+                        <a className="message-file" href={`/api/whatsapp/media/${message.id}`} target="_blank" rel="noreferrer">
+                          <Icon name="file" size={18} />
+                          <span><strong>{message.fileName || 'Document'}</strong><small>{message.mimeType || 'Document'}{message.mediaSize ? ` · ${formatBytes(message.mediaSize)}` : ''}</small></span>
+                          <Icon name="arrow-up-right" size={15} />
+                        </a>
+                      ) : null}
+                      {message.kind !== 'text' && message.caption ? <p className="message-caption">{message.caption}</p> : null}
+                      {message.kind === 'text' ? <p className="message-body">{message.body}</p> : null}
                     </li>
                   ))}
                 </ol>
               )}
+              <form className="message-composer" onSubmit={sendMessage}>
+                {attachment ? (
+                  <div className="attachment-preview">
+                    <span className="attachment-icon"><Icon name={attachment.type.startsWith('image/') ? 'image' : 'file'} size={17} /></span>
+                    <span><strong>{attachment.name}</strong><small>{formatBytes(attachment.size)}</small></span>
+                    <button type="button" className="icon-btn icon-btn--sm" aria-label="Remove attachment" onClick={() => { setAttachment(null); if (fileRef.current) fileRef.current.value = '' }}>
+                      <Icon name="close" size={15} />
+                    </button>
+                  </div>
+                ) : null}
+                <div className="composer-row">
+                  <input ref={fileRef} className="visually-hidden" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv" onChange={(event) => {
+                    const file = event.target.files?.[0] ?? null
+                    if (file && file.size > 25 * 1024 * 1024) {
+                      setError('Choose a file smaller than 25 MB.')
+                      event.target.value = ''
+                      return
+                    }
+                    setAttachment(file)
+                  }} />
+                  <button type="button" className="icon-btn composer-attach" aria-label="Attach image or document" onClick={() => fileRef.current?.click()}>
+                    <Icon name="paperclip" size={18} />
+                  </button>
+                  <input className="input composer-input" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={attachment ? 'Add a caption' : 'Write a message'} aria-label="Message" />
+                  <button type="submit" className="btn btn--primary composer-send" disabled={sending || (!draft.trim() && !attachment)}>
+                    <Icon name="arrow-up" size={16} />
+                    {sending ? 'Sending' : 'Send'}
+                  </button>
+                </div>
+              </form>
             </>
           ) : (
             <div className="thread-empty">
@@ -811,6 +906,11 @@ function WhatsApp() {
       </div>
     </>
   )
+}
+
+function formatBytes(value: number) {
+  if (value < 1024 * 1024) return `${Math.max(1, Math.round(value / 1024))} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function linkLabel(connection: string) {

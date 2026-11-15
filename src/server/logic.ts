@@ -55,6 +55,46 @@ export function extractText(message: unknown): string | null {
   return unwrapText(message, 0)
 }
 
+export type WaMediaKind = 'image' | 'document'
+
+export function extractWaMedia(message: unknown): {
+  kind: WaMediaKind
+  mimeType: string | null
+  fileName: string | null
+  caption: string | null
+} | null {
+  return unwrapWaMedia(message, 0)
+}
+
+function unwrapWaMedia(message: unknown, depth: number): {
+  kind: WaMediaKind
+  mimeType: string | null
+  fileName: string | null
+  caption: string | null
+} | null {
+  if (depth > 5) return null
+  if (!message || typeof message !== 'object') return null
+  const record = message as Record<string, unknown>
+  for (const key of ['imageMessage', 'documentMessage']) {
+    const value = record[key]
+    if (!value || typeof value !== 'object') continue
+    const media = value as Record<string, unknown>
+    return {
+      kind: key === 'imageMessage' ? 'image' : 'document',
+      mimeType: typeof media.mimetype === 'string' ? media.mimetype : null,
+      fileName: typeof media.fileName === 'string' ? media.fileName : null,
+      caption: typeof media.caption === 'string' && media.caption.trim() ? media.caption.trim() : null,
+    }
+  }
+  for (const key of TEXT_WRAPPERS) {
+    const wrapped = record[key]
+    const inner = wrapped && typeof wrapped === 'object' ? (wrapped as { message?: unknown }).message : null
+    const found = unwrapWaMedia(inner, depth + 1)
+    if (found) return found
+  }
+  return null
+}
+
 function unwrapText(message: unknown, depth: number): string | null {
   if (!message || typeof message !== 'object' || depth > 5) return null
   const record = message as Record<string, unknown>

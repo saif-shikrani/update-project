@@ -17,10 +17,15 @@ export type IconName =
   | 'x'
   | 'arrow-right'
   | 'arrow-left'
+  | 'arrow-up'
+  | 'arrow-up-right'
   | 'clock'
   | 'eye'
   | 'eye-off'
   | 'qr'
+  | 'paperclip'
+  | 'file'
+  | 'image'
 
 const paths = {
   grid: (
@@ -78,6 +83,8 @@ const paths = {
   x: <path d="m6.5 6.5 11 11M17.5 6.5l-11 11" />,
   'arrow-right': <path d="M4.5 12h15M13.5 6l6 6-6 6" />,
   'arrow-left': <path d="M19.5 12h-15M10.5 6l-6 6 6 6" />,
+  'arrow-up': <path d="M12 19.5V4.5M6 10.5l6-6 6 6" />,
+  'arrow-up-right': <path d="M7 17 17 7M9 7h8v8" />,
   clock: (
     <>
       <circle cx="12" cy="12" r="8.5" />
@@ -103,6 +110,20 @@ const paths = {
       <rect x="14.5" y="3.5" width="6" height="6" rx="1.5" />
       <rect x="3.5" y="14.5" width="6" height="6" rx="1.5" />
       <path d="M14.5 14.5h2.5v2.5h-2.5zM20.5 14.5v6h-3" />
+    </>
+  ),
+  paperclip: <path d="m20.5 11.5-7.9 7.9a5 5 0 0 1-7.1-7.1l8.4-8.4a3.5 3.5 0 1 1 5 5l-8.5 8.5a2 2 0 0 1-2.8-2.8l7.8-7.8" />,
+  file: (
+    <>
+      <path d="M6 3.5h8l4 4v13H6z" />
+      <path d="M14 3.5v4h4M9 12h6M9 16h6" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+      <circle cx="8.5" cy="9" r="1.3" />
+      <path d="m5 17 4.5-4.5 3 3 2-2 4.5 4.5" />
     </>
   ),
 } satisfies Record<string, ReactNode>

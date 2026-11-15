@@ -1,13 +1,13 @@
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import Fastify from 'fastify'
-import { getCall, listCalls, listChats, listMessages, saveSummary, upsertCall } from './db.ts'
+import { getCall, listCalls, listChats, listMessages, mediaMessage, saveSummary, upsertCall } from './db.ts'
 import { loadEnv } from './env.ts'
 import { transcriptLines } from './logic.ts'
 import { geminiText } from './gemini.ts'
 import { applyWebhook, checkWebhook, loginToken, refreshCallCost } from './telnyx.ts'
 import { replyState, setAutoReply } from './reply.ts'
-import { startWhatsApp, subscribeWhatsApp, whatsAppStatus } from './whatsapp.ts'
+import { maxMediaBytes, sendMedia, sendText, startWhatsApp, subscribeWhatsApp, whatsAppStatus } from './whatsapp.ts'
 import { login, logout, publicUser, readSession, sessionCookie, signup, userFromToken, type AuthUser } from './auth.ts'
 import { balanceOf, buyNumber, dashboardFor, decideCredit, gallery, listCredits, myNumbers, requestCredit } from './accounts.ts'
 
@@ -23,6 +23,9 @@ app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, bo
     ;(error as { statusCode?: number }).statusCode = 400
     done(error as Error, undefined)
   }
+})
+app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_request, body, done) => {
+  done(null, body)
 })
 
 app.setErrorHandler((error: Error & { statusCode?: number }, request, reply) => {
@@ -241,6 +244,52 @@ app.get<{ Params: { jid: string } }>('/api/whatsapp/chats/:jid/messages', async 
   return listMessages(decodeURIComponent(request.params.jid))
 })
 
+app.post<{ Params: { jid: string } }>('/api/whatsapp/chats/:jid/messages', async (request) => {
+  const body = jsonBody(request)
+  const jid = decodeURIComponent(request.params.jid)
+  const message = messageText(body.text)
+  if (!message) {
+    const error = new Error('Message text is required.') as Error & { statusCode?: number }
+    error.statusCode = 400
+    throw error
+  }
+  return sendText(jid, message)
+})
+
+app.post<{ Params: { jid: string } }>('/api/whatsapp/chats/:jid/media', async (request) => {
+  const body = request.body
+  const buffer = Buffer.isBuffer(body) ? body : null
+  const mimeType = String(request.headers['x-mime-type'] || 'application/octet-stream')
+  const fileName = text(request.headers['x-file-name']) || null
+  const caption = text(request.headers['x-caption']) || null
+  if (!buffer || buffer.length === 0) {
+    const error = new Error('A media file is required.') as Error & { statusCode?: number }
+    error.statusCode = 400
+    throw error
+  }
+  if (buffer.length > maxMediaBytes()) {
+    const error = new Error('Media is larger than the 25 MB limit.') as Error & { statusCode?: number }
+    error.statusCode = 413
+    throw error
+  }
+  if (!mimeType.startsWith('image/') && mimeType !== 'application/pdf' && mimeType !== 'application/msword' && !mimeType.startsWith('application/vnd.') && !mimeType.startsWith('text/')) {
+    const error = new Error('Only images and common document files are supported.') as Error & { statusCode?: number }
+    error.statusCode = 415
+    throw error
+  }
+  return sendMedia(decodeURIComponent(request.params.jid), { buffer, mimeType, fileName, caption })
+})
+
+app.get<{ Params: { id: string } }>('/api/whatsapp/media/:id', async (request, reply) => {
+  const media = mediaMessage(Number(request.params.id))
+  if (!media || !media.media_path || !existsSync(media.media_path) || !statSync(media.media_path).isFile()) {
+    return reply.code(404).send({ error: 'Media file not found.' })
+  }
+  const disposition = media.mime_type?.startsWith('image/') ? 'inline' : 'attachment'
+  reply.header('Content-Disposition', media.file_name ? `${disposition}; filename="${safeHeader(media.file_name)}"` : disposition)
+  return reply.type(media.mime_type || 'application/octet-stream').send(createReadStream(resolve(media.media_path)))
+})
+
 app.post<{ Params: { jid: string } }>('/api/whatsapp/chats/:jid/summary', async (request) => {
   const jid = decodeURIComponent(request.params.jid)
   const messages = listMessages(jid)
@@ -297,6 +346,16 @@ function text(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   return trimmed ? trimmed.slice(0, 200) : null
+}
+
+function messageText(value: unknown) {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed.slice(0, 4000) : null
+}
+
+function safeHeader(value: string) {
+  return value.replace(/[\r\n"]/g, '').slice(0, 160)
 }
 
 function jsonBody(request: { body: unknown }) {

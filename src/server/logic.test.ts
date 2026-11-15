@@ -6,6 +6,7 @@ import {
   costFromPayload,
   durationSeconds,
   extractText,
+  extractWaMedia,
   nextStatus,
   normalizeNumber,
   pairReplies,
@@ -40,6 +41,26 @@ test('inbound text ignores media and keeps wrapped text', () => {
   assert.equal(extractText({ conversation: ' hello ' }), 'hello')
   assert.equal(extractText({ ephemeralMessage: { message: { extendedTextMessage: { text: 'later' } } } }), 'later')
   assert.equal(extractText({ deviceSentMessage: { message: { conversation: 'from the phone' } } }), 'from the phone')
+})
+
+test('WhatsApp media metadata survives common wrappers', () => {
+  assert.deepEqual(extractWaMedia({
+    ephemeralMessage: {
+      message: {
+        documentMessage: {
+          mimetype: 'application/pdf',
+          fileName: 'invoice.pdf',
+          caption: 'Here it is',
+        },
+      },
+    },
+  }), {
+    kind: 'document',
+    mimeType: 'application/pdf',
+    fileName: 'invoice.pdf',
+    caption: 'Here it is',
+  })
+  assert.deepEqual(extractWaMedia({ imageMessage: { mimetype: 'image/jpeg' } })?.kind, 'image')
 })
 
 test('money units keep four decimal places', () => {

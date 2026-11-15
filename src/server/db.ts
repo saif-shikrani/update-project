@@ -42,7 +42,13 @@ CREATE TABLE IF NOT EXISTS wa_messages (
   sender TEXT,
   push_name TEXT,
   body TEXT NOT NULL,
-  timestamp TEXT NOT NULL
+  timestamp TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'text',
+  mime_type TEXT,
+  file_name TEXT,
+  media_path TEXT,
+  media_size INTEGER,
+  caption TEXT
 );
 CREATE INDEX IF NOT EXISTS wa_messages_chat ON wa_messages (chat_jid, timestamp);
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -103,6 +109,24 @@ if (!messageColumns.some((column) => column.name === 'from_me')) {
 }
 if (!messageColumns.some((column) => column.name === 'source')) {
   db.exec("ALTER TABLE wa_messages ADD COLUMN source TEXT NOT NULL DEFAULT 'user'")
+}
+if (!messageColumns.some((column) => column.name === 'kind')) {
+  db.exec("ALTER TABLE wa_messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'text'")
+}
+if (!messageColumns.some((column) => column.name === 'mime_type')) {
+  db.exec('ALTER TABLE wa_messages ADD COLUMN mime_type TEXT')
+}
+if (!messageColumns.some((column) => column.name === 'file_name')) {
+  db.exec('ALTER TABLE wa_messages ADD COLUMN file_name TEXT')
+}
+if (!messageColumns.some((column) => column.name === 'media_path')) {
+  db.exec('ALTER TABLE wa_messages ADD COLUMN media_path TEXT')
+}
+if (!messageColumns.some((column) => column.name === 'media_size')) {
+  db.exec('ALTER TABLE wa_messages ADD COLUMN media_size INTEGER')
+}
+if (!messageColumns.some((column) => column.name === 'caption')) {
+  db.exec('ALTER TABLE wa_messages ADD COLUMN caption TEXT')
 }
 
 const callColumns = db.prepare('PRAGMA table_info(calls)').all() as { name: string }[]
@@ -334,12 +358,33 @@ export function saveText(input: {
   fromMe: boolean
   source: 'user' | 'auto'
 }) {
+  return saveMessage({ ...input, kind: 'text', mimeType: null, fileName: null, mediaPath: null, mediaSize: null, caption: input.body })
+}
+
+export function saveMessage(input: {
+  waMessageId: string
+  chatJid: string
+  sender: string | null
+  pushName: string | null
+  body: string
+  timestamp: string
+  displayName: string | null
+  fromMe: boolean
+  source: 'user' | 'auto'
+  kind: 'text' | 'image' | 'document'
+  mimeType: string | null
+  fileName: string | null
+  mediaPath: string | null
+  mediaSize: number | null
+  caption: string | null
+}) {
   db.exec('BEGIN')
   try {
     const inserted = db.prepare(`
       INSERT OR IGNORE INTO wa_messages (
-        wa_message_id, chat_jid, sender, push_name, body, timestamp, from_me, source
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        wa_message_id, chat_jid, sender, push_name, body, timestamp, from_me, source,
+        kind, mime_type, file_name, media_path, media_size, caption
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.waMessageId,
       input.chatJid,
@@ -349,6 +394,12 @@ export function saveText(input: {
       input.timestamp,
       input.fromMe ? 1 : 0,
       input.source,
+      input.kind,
+      input.mimeType,
+      input.fileName,
+      input.mediaPath,
+      input.mediaSize,
+      input.caption,
     )
     if (Number(inserted.changes) > 0 && input.displayName) {
       db.prepare(`
@@ -426,12 +477,24 @@ export function listChats() {
 
 export function listMessages(jid: string) {
   return db.prepare(`
-    SELECT id, sender, push_name, body, timestamp, from_me
+    SELECT id, sender, push_name, body, timestamp, from_me, kind, mime_type, file_name, media_size, caption
     FROM wa_messages
     WHERE chat_jid = ?
     ORDER BY timestamp ASC
   `).all(jid).map((row) => {
-    const message = row as { id: number, sender: string | null, push_name: string | null, body: string, timestamp: string, from_me: number }
+    const message = row as {
+      id: number
+      sender: string | null
+      push_name: string | null
+      body: string
+      timestamp: string
+      from_me: number
+      kind: string
+      mime_type: string | null
+      file_name: string | null
+      media_size: number | null
+      caption: string | null
+    }
     return {
       id: message.id,
       sender: message.sender,
@@ -439,8 +502,27 @@ export function listMessages(jid: string) {
       body: message.body,
       timestamp: message.timestamp,
       fromMe: message.from_me === 1,
+      kind: message.kind || 'text',
+      mimeType: message.mime_type,
+      fileName: message.file_name,
+      mediaSize: message.media_size,
+      caption: message.caption,
     }
   })
+}
+
+export function mediaMessage(id: number) {
+  return db.prepare(`
+    SELECT id, media_path, mime_type, file_name, media_size
+    FROM wa_messages
+    WHERE id = ? AND media_path IS NOT NULL
+  `).get(id) as {
+    id: number
+    media_path: string
+    mime_type: string | null
+    file_name: string | null
+    media_size: number | null
+  } | undefined
 }
 
 export function saveSummary(jid: string, text: string, model: string, messageCount: number) {

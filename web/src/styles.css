@@ -1028,6 +1028,26 @@ button { cursor: pointer; }
 .message-meta time { font-size: 12px; color: var(--faint); }
 .message--mine .message-meta strong { color: var(--accent); }
 .message-body { margin-top: 4px; font-size: 15.5px; line-height: 1.55; color: var(--ink); max-width: 70ch; white-space: pre-wrap; overflow-wrap: anywhere; }
+.message-caption { margin-top: 8px; font-size: 14px; line-height: 1.5; color: var(--ink-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+.message-image { display: block; width: min(320px, 100%); margin-top: 8px; overflow: hidden; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--surface-2); }
+.message-image img { display: block; width: 100%; max-height: 320px; object-fit: cover; }
+.message-file { display: inline-flex; align-items: center; gap: 10px; max-width: min(420px, 100%); margin-top: 8px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--r-md); color: var(--ink); text-decoration: none; background: var(--surface-2); }
+.message-file:hover { border-color: var(--accent); background: var(--accent-tint); }
+.message-file > span { display: flex; flex-direction: column; min-width: 0; }
+.message-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
+.message-file small { margin-top: 2px; color: var(--muted); font-size: 12px; }
+.message-file > .icon:last-child { margin-left: 8px; color: var(--muted); }
+.message-composer { margin-top: auto; padding: 14px 18px 18px; border-top: 1px solid var(--line); background: var(--surface); }
+.composer-row { display: flex; align-items: center; gap: 8px; }
+.composer-input { min-width: 0; flex: 1; }
+.composer-attach { flex: 0 0 auto; border: 1px solid var(--line-strong); }
+.composer-send { min-height: 44px; flex: 0 0 auto; }
+.attachment-preview { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); }
+.attachment-preview > span:nth-child(2) { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.attachment-preview strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
+.attachment-preview small { color: var(--muted); font-size: 12px; }
+.attachment-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--accent-tint); color: var(--accent); }
+.icon-btn--sm { width: 32px; height: 32px; }
 .thread-empty { display: flex; align-items: center; justify-content: center; min-height: 460px; flex: 1; }
 
 /* ---------- auth ---------- */
@@ -1262,6 +1282,11 @@ button { cursor: pointer; }
   .summary-box { margin: 16px 18px 0; }
   .message-list { padding: 0 18px 8px; }
   .thread-body { padding: 16px 18px; }
+  .message-composer { padding: 12px 14px 14px; }
+  .composer-row { align-items: stretch; flex-wrap: wrap; }
+  .composer-input { order: 1; flex-basis: calc(100% - 48px); }
+  .composer-attach { order: 0; }
+  .composer-send { order: 2; width: 100%; }
   .row { padding: 14px 18px; flex-direction: column; }
   .row-side { flex-direction: row; align-items: center; width: 100%; justify-content: flex-start; }
   .number-grid { grid-template-columns: 1fr; }
