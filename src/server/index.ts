@@ -1,10 +1,10 @@
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import Fastify from 'fastify'
-import { getCall, listCalls, listChats, listMessages, saveSummary, upsertCall } from './db.ts'
+import { getCall, listAdminCalls, listCalls, listChats, listMessages, saveCallSummary, saveSummary, upsertCall } from './db.ts'
 import { loadEnv } from './env.ts'
 import { transcriptLines } from './logic.ts'
-import { geminiText } from './gemini.ts'
+import { geminiAudio, geminiText } from './gemini.ts'
 import { applyWebhook, checkWebhook, loginToken, refreshCallCost } from './telnyx.ts'
 import { replyState, setAutoReply } from './reply.ts'
 import { startWhatsApp, subscribeWhatsApp, whatsAppStatus } from './whatsapp.ts'
@@ -189,6 +189,42 @@ app.post('/api/calls/sync', async (request) => {
   }, actor(request).id).json
 })
 
+app.get('/api/admin/calls', async (request) => {
+  requireAdmin(request)
+  return listAdminCalls()
+})
+
+app.get<{ Params: { id: string } }>('/api/admin/calls/:id/recording', async (request, reply) => {
+  requireAdmin(request)
+  const found = getCall(Number(request.params.id))
+  const url = found?.row.recording_url
+  if (!url) return reply.code(404).send({ error: 'No recording is available for this call.' })
+  const recording = await fetch(url)
+  if (!recording.ok) return reply.code(502).send({ error: 'The recording could not be fetched from Telnyx.' })
+  reply.type(recording.headers.get('content-type') || 'audio/mpeg')
+  return reply.send(Buffer.from(await recording.arrayBuffer()))
+})
+
+app.post<{ Params: { id: string } }>('/api/admin/calls/:id/summary', async (request, reply) => {
+  requireAdmin(request)
+  const found = getCall(Number(request.params.id))
+  const url = found?.row.recording_url
+  if (!found || !url) return reply.code(404).send({ error: 'No recording is available for this call.' })
+  const recording = await fetch(url)
+  if (!recording.ok) return reply.code(502).send({ error: 'The recording could not be fetched from Telnyx.' })
+  const contentType = recording.headers.get('content-type') || (found.row.recording_format === 'wav' ? 'audio/wav' : 'audio/mpeg')
+  const audio = Buffer.from(await recording.arrayBuffer())
+  if (audio.length > 25 * 1024 * 1024) return reply.code(413).send({ error: 'The recording is too large to summarize.' })
+  const model = process.env.GEMINI_MODEL?.trim() || 'gemini-3.6-flash'
+  const text = await geminiAudio(
+    'Summarize this phone call in one short paragraph. Use only what is audible. Do not invent names, dates, amounts, or promises.',
+    'Write a concise, factual summary of this call.',
+    contentType,
+    audio,
+  )
+  return saveCallSummary(found.row.id, text, model)
+})
+
 app.post('/api/telnyx/webhook', async (request, reply) => {
   const body = request.body as { raw: string, json: { data?: { event_type?: string, payload?: Record<string, unknown> }, event_type?: string, payload?: Record<string, unknown> } }
   const ok = checkWebhook(
@@ -301,4 +337,12 @@ function text(value: unknown): string | null {
 
 function jsonBody(request: { body: unknown }) {
   return ((request.body as { json?: Record<string, unknown> } | undefined)?.json) ?? {}
+}
+
+function requireAdmin(request: object) {
+  const user = actor(request)
+  if (user.role === 'admin') return user
+  const error = new Error('Only an admin can access call recordings and summaries.') as Error & { statusCode?: number }
+  error.statusCode = 403
+  throw error
 }

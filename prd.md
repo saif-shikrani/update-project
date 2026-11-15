@@ -15,7 +15,7 @@ A local web app on a Node API. People sign in, buy Telnyx numbers, and place cal
 ## Out of scope
 
 - **SMS.** No Telnyx messaging. Phone work is SIP voice calls only.
-- **Call audio recording.** No recording, playback, or stored audio. Records are metadata: duration, status, and cost.
+- **Call audio recording.** Telnyx stores recordings when enabled on the connection/outbound voice profile. The app stores the recording URL metadata, proxies playback to admins, and can generate an admin-only Gemini summary.
 - **Per-user WhatsApp.** There is one linked WhatsApp account, and only the admin can open it.
 
 ## Calls
@@ -52,6 +52,7 @@ Groups are chats keyed by JID. Message count is inbound texts for that chat. The
 
 - Telephony token, `GET /api/calls`, `GET /api/calls/:id`, `POST /api/calls/:id/refresh-cost`
 - `POST /api/telnyx/webhook` (Ed25519 signature check)
+- Admin calls, recording playback, and recording summary: `GET /api/admin/calls`, `GET /api/admin/calls/:id/recording`, `POST /api/admin/calls/:id/summary`
 - `GET /api/whatsapp/status`, QR code as server-sent events
 - `GET /api/whatsapp/chats`, `GET /api/whatsapp/chats/:jid/messages`
 - `POST /api/whatsapp/chats/:jid/summary`
@@ -61,6 +62,7 @@ Screens:
 - **Calls.** Number entry, call, hang up, live state, and history with minutes and cost.
 - **WhatsApp.** Link status, chat list with counts, transcript, stats, and generate summary.
 - **Home.** Totals for minutes, cost, and inbound text count.
+- **Admin calls.** All saved calls, recordings, and Gemini-generated summaries.
 
 ## Stack
 
